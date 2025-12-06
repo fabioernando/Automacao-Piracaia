@@ -1,25 +1,47 @@
-/Automacao-Piracaia
-index.html
-/images
-01.png
-02.png
-03.png
-04.png
-05.png
-06.png
-07.png
-08.png
-09.png
-10.png
-11.png
-12.png
-13.png
-14.png
-15.png
-16.png
-17.png
-18.png
-19.png
-20.png
-21.png
-22.png
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Mapa - Teste Pop-up</title>
+<style>
+  body { font-family: Arial; background:#111; color:#fff; margin:0; padding:20px;}
+  .mapa { position:relative; width:600px; height:400px; background:#222; border-radius:10px; padding:20px;}
+  .ponto { position:absolute; width:40px; height:40px; background:#444; border-radius:6px;
+           display:flex; justify-content:center; align-items:center; cursor:pointer; }
+  .overlay { position:fixed; top:0; left:0; width:100%; height:100%; 
+             background:rgba(0,0,0,0.8); display:none; justify-content:center; align-items:center; z-index:9999;}
+  .popup { position:relative; }
+  .popup img { max-width:80vw; max-height:80vh; border-radius:10px; }
+  .close { position:absolute; top:-40px; right:0; cursor:pointer; font-size:30px;}
+</style>
+</head>
+<body>
+
+<h2>Teste de Pop-up (01–04)</h2>
+
+<div class="mapa">
+  <div class="ponto" style="top:40px; left:40px;" onclick="abre('01')">01</div>
+  <div class="ponto" style="top:40px; left:120px;" onclick="abre('02')">02</div>
+  <div class="ponto" style="top:120px; left:40px;" onclick="abre('03')">03</div>
+  <div class="ponto" style="top:120px; left:120px;" onclick="abre('04')">04</div>
+</div>
+
+<div class="overlay" id="ov">
+  <div class="popup">
+    <span class="close" onclick="fecha()">✖</span>
+    <img id="popupimg" src="">
+  </div>
+</div>
+
+<script>
+function abre(num){
+  document.getElementById('popupimg').src = "img/"+num+".jpg";
+  document.getElementById('ov').style.display = "flex";
+}
+function fecha(){
+  document.getElementById('ov').style.display = "none";
+}
+</script>
+
+</body>
+</html>
