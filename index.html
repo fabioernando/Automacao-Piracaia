@@ -1,47 +1,308 @@
-<!DOCTYPE html>
-<html lang="pt-br">
+
+<!doctype html>
+<html lang="pt-BR">
 <head>
-<meta charset="UTF-8">
-<title>Mapa - Teste Pop-up</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mapa interativo — Planta Baixa</title>
 <style>
-  body { font-family: Arial; background:#111; color:#fff; margin:0; padding:20px;}
-  .mapa { position:relative; width:600px; height:400px; background:#222; border-radius:10px; padding:20px;}
-  .ponto { position:absolute; width:40px; height:40px; background:#444; border-radius:6px;
-           display:flex; justify-content:center; align-items:center; cursor:pointer; }
-  .overlay { position:fixed; top:0; left:0; width:100%; height:100%; 
-             background:rgba(0,0,0,0.8); display:none; justify-content:center; align-items:center; z-index:9999;}
-  .popup { position:relative; }
-  .popup img { max-width:80vw; max-height:80vh; border-radius:10px; }
-  .close { position:absolute; top:-40px; right:0; cursor:pointer; font-size:30px;}
+  body { font-family: Inter, Arial, sans-serif; margin:0; padding:0; display:flex; height:100vh; }
+  #sidebar { width:320px; min-width:220px; max-width:380px; background:#fafafa; border-right:1px solid #e6e6e6; padding:14px; overflow:auto; }
+  #main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:14px; overflow:auto; }
+  h2 { margin:6px 0 12px 0; font-size:18px; }
+  .hint { color:#666; font-size:13px; margin-bottom:8px; }
+  #viewerContainer { position:relative; width:100%; max-width:1200px; background:#fff; border:1px solid #ddd; overflow:hidden; }
+  canvas { display:block; width:100%; height:auto; transform-origin: 0 0; cursor:grab; background:#fff; }
+  .hotspot {
+    position:absolute;
+    background: rgba(255,255,255,0); 
+    border: 1px dashed rgba(0,0,0,0); 
+    cursor:pointer;
+  }
+  .hotspot:hover { outline: 2px solid rgba(0,120,215,0.25); }
+  /* modal */
+  .modal-backdrop { position:fixed; inset:0; background: rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:2000; }
+  .modal { width:94%; max-width:1100px; height:84%; background:#fff; border-radius:6px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,0.4); display:flex; flex-direction:column; }
+  .modal header { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #eee; }
+  .modal header h3 { margin:0; font-size:16px; }
+  .modal header button { background:#e74c3c; border:none; color:white; padding:6px 10px; border-radius:4px; cursor:pointer; margin-left:8px; }
+  .modal iframe { flex:1; width:100%; border:0; }
+  /* controls */
+  .controls { padding:8px 0; display:flex; gap:8px; align-items:center; }
+  .controls button { padding:6px 10px; cursor:pointer; border-radius:4px; border:1px solid #ccc; background:#fff; }
+  .link-list { list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:6px; }
+  .link-list li { background:#fff; padding:8px; border-radius:6px; border:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
+  .link-list a { text-decoration:none; color:#0b66c3; font-weight:600; }
+  .small { font-size:12px; color:#666; }
 </style>
 </head>
 <body>
+  <aside id="sidebar">
+    <h2>Mapa interativo — Planta Baixa</h2>
+    <div class="hint">Clique sobre os retângulos no mapa para abrir um popup com a página externa. Caso o site bloqueie iframes, use "Abrir em nova aba".</div>
+    <div class="controls">
+      <button id="zoomIn">Zoom +</button>
+      <button id="zoomOut">Zoom -</button>
+      <button id="resetZoom">Reset</button>
+    </div>
+    <h3 style="margin-top:12px;">Links (fallback / índice)</h3>
+    <div class="small">Se os hotspots não aparecerem, use estes links listados conforme o PDF.</div>
+    <ul id="linkList" class="link-list"></ul>
+    <div style="height:20px;"></div>
+    <div class="small">Arquivo PDF usado: <strong>Planta Baixa.pdf</strong></div>
+  </aside>
 
-<h2>Teste de Pop-up (01–04)</h2>
+  <main id="main">
+    <div id="viewerContainer">
+      <div id="canvasWrapper" style="position:relative;">
+        <canvas id="pdfCanvas"></canvas>
+      </div>
+    </div>
+  </main>
 
-<div class="mapa">
-  <div class="ponto" style="top:40px; left:40px;" onclick="abre('01')">01</div>
-  <div class="ponto" style="top:40px; left:120px;" onclick="abre('02')">02</div>
-  <div class="ponto" style="top:120px; left:40px;" onclick="abre('03')">03</div>
-  <div class="ponto" style="top:120px; left:120px;" onclick="abre('04')">04</div>
-</div>
-
-<div class="overlay" id="ov">
-  <div class="popup">
-    <span class="close" onclick="fecha()">✖</span>
-    <img id="popupimg" src="">
+  <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-hidden="true">
+    <div class="modal" aria-modal="true">
+      <header>
+        <h3 id="modalTitle">Detalhes</h3>
+        <div>
+          <button id="openInTab">Abrir em nova aba</button>
+          <button id="closeModal">Fechar</button>
+        </div>
+      </header>
+      <iframe id="modalFrame" src=""></iframe>
+    </div>
   </div>
-</div>
 
+<script src="https://unpkg.com/pdfjs-dist@3.7.107/build/pdf.min.js"></script>
 <script>
-function abre(num){
-  document.getElementById('popupimg').src = "img/"+num+".jpg";
-  document.getElementById('ov').style.display = "flex";
-}
-function fecha(){
-  document.getElementById('ov').style.display = "none";
-}
-</script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.7.107/build/pdf.worker.min.js';
 
+const canvas = document.getElementById('pdfCanvas');
+const ctx = canvas.getContext('2d');
+const wrapper = document.getElementById('canvasWrapper');
+const modalBackdrop = document.getElementById('modalBackdrop');
+const modalFrame = document.getElementById('modalFrame');
+const modalTitle = document.getElementById('modalTitle');
+const closeModalBtn = document.getElementById('closeModal');
+const openInTabBtn = document.getElementById('openInTab');
+const linkListEl = document.getElementById('linkList');
+
+let pdfDoc = null;
+let scale = 1.0;
+const scaleStep = 0.2;
+let currentUrl = null;
+
+// PDF relativo (arquivo enviado)
+const pdfUrl = 'Planta Baixa.pdf';
+
+// Mapeamento fallback número -> URL (extraído do PDF / arquivo enviado).
+// Usei os links listados no PDF como índice. Chaves sem zero à esquerda.
+const numberToUrl = {
+  "57":"https://fabioernando.github.io/Automacao-Piracaia/img/57.JPG",
+  "58":"https://fabioernando.github.io/Automacao-Piracaia/img/58.JPG",
+  "1":"https://fabioernando.github.io/Automacao-Piracaia/img/01.JPG",
+  "2":"https://fabioernando.github.io/Automacao-Piracaia/img/02.JPG",
+  "3":"https://fabioernando.github.io/Automacao-Piracaia/img/03.JPG",
+  "4":"https://fabioernando.github.io/Automacao-Piracaia/img/04.JPG",
+  "5":"https://fabioernando.github.io/Automacao-Piracaia/img/05.JPG",
+  "6":"https://fabioernando.github.io/Automacao-Piracaia/img/06.JPG",
+  "7":"https://fabioernando.github.io/Automacao-Piracaia/img/07.JPG",
+  "8":"https://fabioernando.github.io/Automacao-Piracaia/img/08.JPG",
+  "9":"https://fabioernando.github.io/Automacao-Piracaia/img/09.JPG",
+  "10":"https://fabioernando.github.io/Automacao-Piracaia/img/10.JPG",
+  "55":"https://fabioernando.github.io/Automacao-Piracaia/img/55.JPG",
+  "12":"https://fabioernando.github.io/Automacao-Piracaia/img/12.JPG",
+  "13":"https://fabioernando.github.io/Automacao-Piracaia/img/13.JPG",
+  "14":"https://fabioernando.github.io/Automacao-Piracaia/img/14.JPG",
+  "15":"https://fabioernando.github.io/Automacao-Piracaia/img/15.JPG",
+  "16":"https://fabioernando.github.io/Automacao-Piracaia/img/16.JPG",
+  "17":"https://fabioernando.github.io/Automacao-Piracaia/img/17.JPG",
+  "18":"https://fabioernando.github.io/Automacao-Piracaia/img/18.JPG",
+  "19":"https://fabioernando.github.io/Automacao-Piracaia/img/19.JPG",
+  "20":"https://fabioernando.github.io/Automacao-Piracaia/img/20.JPG",
+  "21":"https://fabioernando.github.io/Automacao-Piracaia/img/21.JPG",
+  "22":"https://fabioernando.github.io/Automacao-Piracaia/img/22.JPG",
+  "23":"https://fabioernando.github.io/Automacao-Piracaia/img/23.JPG",
+  "24":"https://fabioernando.github.io/Automacao-Piracaia/img/24.JPG",
+  "26":"https://fabioernando.github.io/Automacao-Piracaia/img/26.JPG",
+  "25":"https://fabioernando.github.io/Automacao-Piracaia/img/25.JPG",
+  "28":"https://fabioernando.github.io/Automacao-Piracaia/img/28.JPG",
+  "27":"https://fabioernando.github.io/Automacao-Piracaia/img/27.JPG",
+  "29":"https://fabioernando.github.io/Automacao-Piracaia/img/29.JPG",
+  "30":"https://fabioernando.github.io/Automacao-Piracaia/img/30.JPG",
+  "31":"https://fabioernando.github.io/Automacao-Piracaia/img/31.JPG",
+  "32":"https://fabioernando.github.io/Automacao-Piracaia/img/32.JPG",
+  "33":"https://fabioernando.github.io/Automacao-Piracaia/img/33.JPG",
+  "34":"https://fabioernando.github.io/Automacao-Piracaia/img/34.JPG",
+  "41":"https://fabioernando.github.io/Automacao-Piracaia/img/41.JPG",
+  "42":"https://fabioernando.github.io/Automacao-Piracaia/img/42.JPG",
+  "40":"https://fabioernando.github.io/Automacao-Piracaia/img/40.JPG",
+  "39":"https://fabioernando.github.io/Automacao-Piracaia/img/39.JPG",
+  "35":"https://fabioernando.github.io/Automacao-Piracaia/img/35.JPG",
+  "38":"https://fabioernando.github.io/Automacao-Piracaia/img/38.JPG",
+  "36":"https://fabioernando.github.io/Automacao-Piracaia/img/36.JPG",
+  "37":"https://fabioernando.github.io/Automacao-Piracaia/img/37.JPG",
+  "43":"https://fabioernando.github.io/Automacao-Piracaia/img/43.JPG",
+  "44":"https://fabioernando.github.io/Automacao-Piracaia/img/44.JPG",
+  "45":"https://fabioernando.github.io/Automacao-Piracaia/img/45.JPG",
+  "46":"https://fabioernando.github.io/Automacao-Piracaia/img/46.JPG",
+  "47":"https://fabioernando.github.io/Automacao-Piracaia/img/47.JPG",
+  "48":"https://fabioernando.github.io/Automacao-Piracaia/img/48.JPG",
+  "49":"https://fabioernando.github.io/Automacao-Piracaia/img/49.JPG",
+  "50":"https://fabioernando.github.io/Automacao-Piracaia/img/50.JPG",
+  "51":"https://fabioernando.github.io/Automacao-Piracaia/img/51.JPG",
+  "52":"https://fabioernando.github.io/Automacao-Piracaia/img/52.JPG",
+  "53":"https://fabioernando.github.io/Automacao-Piracaia/img/53.JPG",
+  "54":"https://fabioernando.github.io/Automacao-Piracaia/img/54.JPG",
+  "59":"https://fabioernando.github.io/Automacao-Piracaia/img/59.JPG",
+  "60":"https://fabioernando.github.io/Automacao-Piracaia/img/60.JPG",
+  "61":"https://fabioernando.github.io/Automacao-Piracaia/img/61.JPG",
+  "62":"https://fabioernando.github.io/Automacao-Piracaia/img/62.JPG",
+  "63":"https://fabioernando.github.io/Automacao-Piracaia/img/63.JPG",
+  "65":"https://fabioernando.github.io/Automacao-Piracaia/img/65.JPG",
+  "66":"https://fabioernando.github.io/Automacao-Piracaia/img/66.JPG",
+  "67":"https://fabioernando.github.io/Automacao-Piracaia/img/67.JPG",
+  "64":"https://fabioernando.github.io/Automacao-Piracaia/img/64.JPG",
+  "68":"https://fabioernando.github.io/Automacao-Piracaia/img/68.JPG",
+  "69":"https://fabioernando.github.io/Automacao-Piracaia/img/69.JPG",
+  "56":"https://fabioernando.github.io/Automacao-Piracaia/img/56.JPG"
+};
+
+function populateLinkList() {
+  const keys = Object.keys(numberToUrl).sort((a,b)=>Number(a)-Number(b));
+  keys.forEach(k=>{
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = numberToUrl[k];
+    a.target = '_blank';
+    a.textContent = k.padStart(2,'0') + ' — Abrir';
+    const btn = document.createElement('button');
+    btn.textContent = 'Abrir popup';
+    btn.style.cursor = 'pointer';
+    btn.addEventListener('click', (e)=>{
+      e.preventDefault();
+      openPopup(numberToUrl[k], 'Número ' + k);
+    });
+    li.appendChild(a);
+    li.appendChild(btn);
+    linkListEl.appendChild(li);
+  });
+}
+
+async function renderPdfFromUrl(url) {
+  const loadingTask = pdfjsLib.getDocument(url);
+  pdfDoc = await loadingTask.promise;
+  const page = await pdfDoc.getPage(1);
+  await renderPage(page);
+}
+
+async function renderPage(page) {
+  // remove old hotspots
+  const olds = wrapper.querySelectorAll('.hotspot');
+  olds.forEach(el=>el.remove());
+
+  const viewport = page.getViewport({ scale: scale });
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  canvas.style.width = "100%";
+  canvas.style.height = (viewport.height / viewport.width * 100) + "%";
+
+  const renderContext = { canvasContext: ctx, viewport: viewport };
+  await page.render(renderContext).promise;
+
+  const annotations = await page.getAnnotations({intent:'display'});
+  annotations.forEach(ann=>{
+    if (ann.subtype === 'Link' && (ann.url || ann.dest)) {
+      const rect = pdfjsLib.Util.normalizeRect(ann.rect);
+      const viewRect = viewport.convertToViewportRectangle(rect);
+      const x1 = Math.min(viewRect[0], viewRect[2]);
+      const y1 = Math.min(viewRect[1], viewRect[3]);
+      const x2 = Math.max(viewRect[0], viewRect[2]);
+      const y2 = Math.max(viewRect[1], viewRect[3]);
+      const left = x1;
+      const top = y1;
+      const width = x2 - x1;
+      const height = y2 - y1;
+      const hs = document.createElement('div');
+      hs.className = 'hotspot';
+      const displayScale = wrapper.clientWidth / canvas.width;
+      hs.style.left = (left * displayScale) + 'px';
+      hs.style.top = (top * displayScale) + 'px';
+      hs.style.width = (width * displayScale) + 'px';
+      hs.style.height = (height * displayScale) + 'px';
+      hs.dataset.url = ann.url || '';
+      // try to derive a number label from the link (if URL contains XX.JPG)
+      let label = '';
+      if (ann.url) {
+        const m = ann.url.match(/(\\d{1,2})\\.JPG/i);
+        if (m) label = String(Number(m[1])); // remove leading zeros
+      }
+      hs.title = ann.url || (ann.dest ? 'Destino interno' : '');
+      hs.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        if (ann.url) {
+          openPopup(ann.url, label ? ('Número ' + label) : ann.url);
+        } else {
+          alert('Link interno ao PDF (dest). Não implementado neste release.');
+        }
+      });
+      wrapper.appendChild(hs);
+    }
+  });
+}
+
+function openPopup(url, title) {
+  currentUrl = url;
+  modalTitle.textContent = title || url;
+  modalFrame.src = url;
+  modalBackdrop.style.display = 'flex';
+  modalBackdrop.setAttribute('aria-hidden','false');
+  // If the remote blocks iframe, user can click "Abrir em nova aba"
+}
+
+closeModalBtn.addEventListener('click', ()=>{
+  modalFrame.src = '';
+  modalBackdrop.style.display = 'none';
+  modalBackdrop.setAttribute('aria-hidden','true');
+});
+
+openInTabBtn.addEventListener('click', ()=>{
+  if (currentUrl) window.open(currentUrl, '_blank');
+});
+
+document.getElementById('zoomIn').addEventListener('click', async ()=>{
+  scale = scale + scaleStep;
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  await renderPage(page);
+});
+document.getElementById('zoomOut').addEventListener('click', async ()=>{
+  scale = Math.max(0.2, scale - scaleStep);
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  await renderPage(page);
+});
+document.getElementById('resetZoom').addEventListener('click', async ()=>{
+  scale = 1.0;
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  await renderPage(page);
+});
+
+// handle resize to reposition hotspots
+window.addEventListener('resize', async ()=>{
+  if (!pdfDoc) return;
+  const page = await pdfDoc.getPage(1);
+  await renderPage(page);
+});
+
+populateLinkList();
+renderPdfFromUrl(pdfUrl).catch(err=>{
+  console.error(err);
+  alert('Erro ao carregar PDF: '+err.message);
+});
+
+</script>
 </body>
 </html>
+
