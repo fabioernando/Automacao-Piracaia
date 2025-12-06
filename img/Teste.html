@@ -1,0 +1,36 @@
+
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Topologia Interativa (01–69)</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <header class="topbar">
+      <h1>Topologia Interativa</h1>
+      <p>Clique em um número (01–69) para abrir a imagem correspondente.</p>
+    </header>
+
+    <div class="map-wrapper">
+      <img id="map-base" src="C:\Users\fa056162\Desktop\Automação Piracaia\Interruptores Piracaia\Planta Baixa.png" alt="Mapa base extraído do PDF" />
+      <svg id="map-overlay" aria-label="Hotspots numerados" role="img"
+           preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </main>
+
+  <!-- Modal -->
+  <div id="modal" class="modal" aria-hidden="true" aria-modal="true" role="dialog">
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-content" role="document">
+      <button class="modal-close" type="button" aria-label="Fechar" data-close>&times;</button>
+      <figure class="modal-figure">
+        <img id="modal-img" src="" alt="Imagem do item selecionado" />
+        <figcaption id="modal-caption"></figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
