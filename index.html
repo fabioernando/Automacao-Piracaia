@@ -5,20 +5,25 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Mapa interativo — Planta Baixa</title>
 <style>
-  body { font-family: Inter, Arial, sans-serif; margin:0; padding:0; display:flex; height:100vh; }
-  #sidebar { width:320px; min-width:220px; max-width:380px; background:#fafafa; border-right:1px solid #e6e6e6; padding:14px; overflow:auto; }
-  #main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:14px; overflow:auto; }
+  :root { --sidebar-width:320px; }
+  html,body { height:100%; margin:0; }
+  body { font-family: Inter, Arial, sans-serif; margin:0; padding:0; display:flex; height:100vh; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+  #sidebar { width:var(--sidebar-width); min-width:220px; max-width:380px; background:#fafafa; border-right:1px solid #e6e6e6; padding:14px; overflow:auto; box-sizing:border-box; }
+  #main { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:14px; overflow:hidden; box-sizing:border-box; }
   h2 { margin:6px 0 12px 0; font-size:18px; }
   .hint { color:#666; font-size:13px; margin-bottom:8px; }
-  #viewerContainer { position:relative; width:100%; max-width:1200px; background:#fff; border:1px solid #ddd; overflow:hidden; }
-  canvas { display:block; width:100%; height:auto; transform-origin: 0 0; cursor:grab; background:#fff; }
+  #viewerContainer { position:relative; width:100%; height:100%; max-width: calc(100% - var(--sidebar-width)); background:#fff; border:1px solid #ddd; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  /* wrapper: recebe translate+scale */
+  #canvasWrapper { position:relative; transform-origin: top left; will-change: transform; cursor:grab; }
+  canvas { display:block; background:#fff; user-select:none; -webkit-user-drag:none; }
   .hotspot {
     position:absolute;
     background: rgba(255,255,255,0); 
     border: 1px dashed rgba(0,0,0,0); 
     cursor:pointer;
+    touch-action: manipulation;
   }
-  .hotspot:hover { outline: 2px solid rgba(0,120,215,0.25); }
+  .hotspot:hover { outline: 2px solid rgba(0,120,215,0.18); }
   /* modal */
   .modal-backdrop { position:fixed; inset:0; background: rgba(0,0,0,0.45); display:none; align-items:center; justify-content:center; z-index:2000; }
   .modal { width:94%; max-width:1100px; height:84%; background:#fff; border-radius:6px; overflow:hidden; box-shadow:0 10px 30px rgba(0,0,0,0.4); display:flex; flex-direction:column; }
@@ -33,6 +38,11 @@
   .link-list li { background:#fff; padding:8px; border-radius:6px; border:1px solid #eee; display:flex; justify-content:space-between; align-items:center; }
   .link-list a { text-decoration:none; color:#0b66c3; font-weight:600; }
   .small { font-size:12px; color:#666; }
+  /* tiny helpers for touch */
+  @media (max-width:700px) {
+    #sidebar { display:none; }
+    #viewerContainer { max-width:100%; }
+  }
 </style>
 </head>
 <body>
@@ -72,8 +82,17 @@
     </div>
   </div>
 
+<!-- PDF.js -->
 <script src="https://unpkg.com/pdfjs-dist@3.7.107/build/pdf.min.js"></script>
 <script>
+/* Opção A — PDF.js + transform-scale pan/zoom
+   Funcionalidades:
+   - Renderiza PDF uma vez
+   - Aplica translate+scale ao #canvasWrapper para zoom e pan
+   - Hotspots são posicionados em pixels e escalam junto com o wrapper
+   - Suporta drag (mouse/touch) e wheel zoom
+*/
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.7.107/build/pdf.worker.min.js';
 
 const canvas = document.getElementById('pdfCanvas');
@@ -87,15 +106,195 @@ const openInTabBtn = document.getElementById('openInTab');
 const linkListEl = document.getElementById('linkList');
 
 let pdfDoc = null;
-let scale = 1.0;
-const scaleStep = 0.2;
-let currentUrl = null;
 
-// PDF relativo (arquivo enviado)
+// transform state
+let scale = 1.0;
+const minScale = 0.3;
+const maxScale = 5.0;
+let offsetX = 0;
+let offsetY = 0;
+
+// dragging state
+let isDragging = false;
+let dragStartX = 0;
+let dragStartY = 0;
+let wrapperRect = null;
+
+// touch pinch state
+let isTouching = false;
+let initialTouchDist = 0;
+let initialScale = 1;
+let touchMidpoint = { x: 0, y: 0 };
+
+// PDF URL (ajuste se necessário)
 const pdfUrl = 'https://fabioernando.github.io/Automacao-Piracaia/img/Planta.pdf';
 
-// Mapeamento fallback número -> URL (extraído do PDF / arquivo enviado).
-// Usei os links listados no PDF como índice. Chaves sem zero à esquerda.
+// ----- helper: aplicar transform (translate + scale) -----
+function applyTransform() {
+  wrapper.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+}
+
+// ----- wheel zoom (centrado) -----
+function handleWheelZoom(e) {
+  // use ctrl for finer control? Here we always zoom with wheel
+  e.preventDefault();
+  const delta = -e.deltaY;
+  const zoomFactor = delta > 0 ? 1.12 : 0.88;
+  const newScale = Math.max(minScale, Math.min(maxScale, scale * zoomFactor));
+  // get mouse position relative to wrapper
+  const rect = wrapper.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  // Convert mouse pos to map coords before scaling
+  const mapX = (mx - offsetX) / scale;
+  const mapY = (my - offsetY) / scale;
+  // update scale
+  scale = newScale;
+  // re-center so that mapX,mapY remains under cursor
+  offsetX = e.clientX - rect.left - mapX * scale;
+  offsetY = e.clientY - rect.top - mapY * scale;
+  applyTransform();
+}
+
+// ----- mouse drag (pan) -----
+wrapper.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  dragStartX = e.clientX - offsetX;
+  dragStartY = e.clientY - offsetY;
+  wrapper.style.cursor = 'grabbing';
+  // cache bounding box
+  wrapperRect = wrapper.getBoundingClientRect();
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  offsetX = e.clientX - dragStartX;
+  offsetY = e.clientY - dragStartY;
+  applyTransform();
+});
+
+window.addEventListener('mouseup', () => {
+  isDragging = false;
+  wrapper.style.cursor = 'grab';
+});
+
+// ----- touch handlers: pan + pinch zoom -----
+wrapper.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    // single-finger pan
+    isDragging = true;
+    dragStartX = e.touches[0].clientX - offsetX;
+    dragStartY = e.touches[0].clientY - offsetY;
+  } else if (e.touches.length === 2) {
+    isTouching = true;
+    isDragging = false;
+    initialTouchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    initialScale = scale;
+    // compute midpoint
+    touchMidpoint.x = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    touchMidpoint.y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    // compute map coords at midpoint
+    const rect = wrapper.getBoundingClientRect();
+    const mx = touchMidpoint.x - rect.left;
+    const my = touchMidpoint.y - rect.top;
+    // store to keep midpoint stable while scaling
+    wrapper._pinchMap = { mapX: (mx - offsetX) / scale, mapY: (my - offsetY) / scale };
+  }
+});
+
+wrapper.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (isTouching && e.touches.length === 2) {
+    const dist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const factor = dist / initialTouchDist;
+    let newScale = initialScale * factor;
+    newScale = Math.max(minScale, Math.min(maxScale, newScale));
+    // compute new offsets so the map point under midpoint stays fixed
+    const rect = wrapper.getBoundingClientRect();
+    const mx = touchMidpoint.x - rect.left;
+    const my = touchMidpoint.y - rect.top;
+    const mapX = wrapper._pinchMap.mapX;
+    const mapY = wrapper._pinchMap.mapY;
+    scale = newScale;
+    offsetX = mx - mapX * scale;
+    offsetY = my - mapY * scale;
+    applyTransform();
+  } else if (isDragging && e.touches.length === 1) {
+    offsetX = e.touches[0].clientX - dragStartX;
+    offsetY = e.touches[0].clientY - dragStartY;
+    applyTransform();
+  }
+}, { passive: false });
+
+wrapper.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) {
+    isTouching = false;
+    isDragging = false;
+  }
+});
+
+// ----- buttons zoom -----
+document.getElementById('zoomIn').addEventListener('click', () => {
+  const factor = 1.2;
+  const newScale = Math.min(maxScale, scale * factor);
+  // center zoom on viewport center
+  const rect = wrapper.getBoundingClientRect();
+  const mx = rect.width / 2;
+  const my = rect.height / 2;
+  const mapX = (mx - offsetX) / scale;
+  const mapY = (my - offsetY) / scale;
+  scale = newScale;
+  offsetX = mx - mapX * scale;
+  offsetY = my - mapY * scale;
+  applyTransform();
+});
+
+document.getElementById('zoomOut').addEventListener('click', () => {
+  const factor = 1.2;
+  const newScale = Math.max(minScale, scale / factor);
+  const rect = wrapper.getBoundingClientRect();
+  const mx = rect.width / 2;
+  const my = rect.height / 2;
+  const mapX = (mx - offsetX) / scale;
+  const mapY = (my - offsetY) / scale;
+  scale = newScale;
+  offsetX = mx - mapX * scale;
+  offsetY = my - mapY * scale;
+  applyTransform();
+});
+
+document.getElementById('resetZoom').addEventListener('click', () => {
+  scale = 1;
+  offsetX = 0;
+  offsetY = 0;
+  applyTransform();
+});
+
+// ----- popup -----
+function openPopup(url, title) {
+  modalTitle.textContent = title || url;
+  modalFrame.src = url;
+  modalBackdrop.style.display = 'flex';
+  modalBackdrop.setAttribute('aria-hidden', 'false');
+}
+closeModalBtn.addEventListener('click', () => {
+  modalFrame.src = '';
+  modalBackdrop.style.display = 'none';
+  modalBackdrop.setAttribute('aria-hidden', 'true');
+});
+openInTabBtn.addEventListener('click', () => {
+  const url = modalFrame.src;
+  if (url) window.open(url, '_blank');
+});
+
+// ----- build link list (fallback) -----
+// (substitua/adicione URLs se quiser)
 const numberToUrl = {
   "57":"https://fabioernando.github.io/Automacao-Piracaia/img/57.JPG",
   "58":"https://fabioernando.github.io/Automacao-Piracaia/img/58.JPG",
@@ -188,118 +387,82 @@ function populateLinkList() {
   });
 }
 
-async function renderPdfFromUrl(url) {
-  const loadingTask = pdfjsLib.getDocument(url);
-  pdfDoc = await loadingTask.promise;
-  const page = await pdfDoc.getPage(1);
-  await renderPage(page);
+// ----- carregar e renderizar o PDF UMA VEZ -----
+async function loadPdf() {
+  try {
+    const loadingTask = pdfjsLib.getDocument(pdfUrl);
+    pdfDoc = await loadingTask.promise;
+    const page = await pdfDoc.getPage(1);
+    // render em scale = 1 (renderiza em tamanho natural)
+    const viewport = page.getViewport({ scale: 1 });
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    // ajuste de estilo do canvas para exibir em 1:1 no wrapper
+    canvas.style.width = canvas.width + 'px';
+    canvas.style.height = canvas.height + 'px';
+    // render
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    // posiciona wrapper no centro inicial
+    offsetX = Math.max(0, (document.getElementById('viewerContainer').clientWidth - canvas.width) / 2);
+    offsetY = Math.max(0, (document.getElementById('viewerContainer').clientHeight - canvas.height) / 2);
+    applyTransform();
+    // criar hotspots com base nas annotations
+    createHotspots(page, viewport);
+  } catch (err) {
+    console.error('Erro ao carregar PDF:', err);
+    alert('Erro ao carregar PDF: ' + err.message);
+  }
 }
 
-async function renderPage(page) {
-  // remove old hotspots
+// ----- criar hotspots a partir de annotations do PDF -----
+async function createHotspots(page, viewport) {
+  // remove hotspots existentes
   const olds = wrapper.querySelectorAll('.hotspot');
-  olds.forEach(el=>el.remove());
+  olds.forEach(el => el.remove());
 
-  const viewport = page.getViewport({ scale: scale });
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  canvas.style.width = "100%";
-  canvas.style.height = (viewport.height / viewport.width * 100) + "%";
+  const annotations = await page.getAnnotations({ intent: 'display' });
+  annotations.forEach(ann => {
+    if (ann.subtype !== 'Link' || (!ann.url && !ann.dest)) return;
+    const rect = pdfjsLib.Util.normalizeRect(ann.rect);
+    const viewRect = viewport.convertToViewportRectangle(rect);
+    // viewRect é [x1, y1, x2, y2] (em pixels no canvas)
+    const x1 = Math.min(viewRect[0], viewRect[2]);
+    const y1 = Math.min(viewRect[1], viewRect[3]);
+    const x2 = Math.max(viewRect[0], viewRect[2]);
+    const y2 = Math.max(viewRect[1], viewRect[3]);
+    const left = x1;
+    const top = y1;
+    const width = x2 - x1;
+    const height = y2 - y1;
 
-  const renderContext = { canvasContext: ctx, viewport: viewport };
-  await page.render(renderContext).promise;
+    const hs = document.createElement('div');
+    hs.className = 'hotspot';
+    hs.style.left = left + 'px';
+    hs.style.top = top + 'px';
+    hs.style.width = width + 'px';
+    hs.style.height = height + 'px';
+    hs.style.boxSizing = 'border-box';
+    hs.title = ann.url || (ann.dest ? 'Destino interno' : '');
 
-  const annotations = await page.getAnnotations({intent:'display'});
-  annotations.forEach(ann=>{
-    if (ann.subtype === 'Link' && (ann.url || ann.dest)) {
-      const rect = pdfjsLib.Util.normalizeRect(ann.rect);
-      const viewRect = viewport.convertToViewportRectangle(rect);
-      const x1 = Math.min(viewRect[0], viewRect[2]);
-      const y1 = Math.min(viewRect[1], viewRect[3]);
-      const x2 = Math.max(viewRect[0], viewRect[2]);
-      const y2 = Math.max(viewRect[1], viewRect[3]);
-      const left = x1;
-      const top = y1;
-      const width = x2 - x1;
-      const height = y2 - y1;
-      const hs = document.createElement('div');
-      hs.className = 'hotspot';
-      const displayScale = wrapper.clientWidth / canvas.width;
-      hs.style.left = (left * displayScale) + 'px';
-      hs.style.top = (top * displayScale) + 'px';
-      hs.style.width = (width * displayScale) + 'px';
-      hs.style.height = (height * displayScale) + 'px';
-      hs.dataset.url = ann.url || '';
-      // try to derive a number label from the link (if URL contains XX.JPG)
-      let label = '';
+    hs.addEventListener('click', (e) => {
+      e.stopPropagation();
       if (ann.url) {
-        const m = ann.url.match(/(\\d{1,2})\\.JPG/i);
-        if (m) label = String(Number(m[1])); // remove leading zeros
+        openPopup(ann.url, ann.url);
+      } else {
+        alert('Link interno ao PDF (dest). Não implementado nesta versão.');
       }
-      hs.title = ann.url || (ann.dest ? 'Destino interno' : '');
-      hs.addEventListener('click', (ev)=>{
-        ev.stopPropagation();
-        if (ann.url) {
-          openPopup(ann.url, label ? ('Número ' + label) : ann.url);
-        } else {
-          alert('Link interno ao PDF (dest). Não implementado neste release.');
-        }
-      });
-      wrapper.appendChild(hs);
-    }
+    });
+
+    wrapper.appendChild(hs);
   });
 }
 
-function openPopup(url, title) {
-  currentUrl = url;
-  modalTitle.textContent = title || url;
-  modalFrame.src = url;
-  modalBackdrop.style.display = 'flex';
-  modalBackdrop.setAttribute('aria-hidden','false');
-  // If the remote blocks iframe, user can click "Abrir em nova aba"
-}
+// habilitar wheel zoom no container
+document.getElementById('viewerContainer').addEventListener('wheel', handleWheelZoom, { passive: false });
 
-closeModalBtn.addEventListener('click', ()=>{
-  modalFrame.src = '';
-  modalBackdrop.style.display = 'none';
-  modalBackdrop.setAttribute('aria-hidden','true');
-});
-
-openInTabBtn.addEventListener('click', ()=>{
-  if (currentUrl) window.open(currentUrl, '_blank');
-});
-
-document.getElementById('zoomIn').addEventListener('click', async ()=>{
-  scale = scale + scaleStep;
-  if (!pdfDoc) return;
-  const page = await pdfDoc.getPage(1);
-  await renderPage(page);
-});
-document.getElementById('zoomOut').addEventListener('click', async ()=>{
-  scale = Math.max(0.2, scale - scaleStep);
-  if (!pdfDoc) return;
-  const page = await pdfDoc.getPage(1);
-  await renderPage(page);
-});
-document.getElementById('resetZoom').addEventListener('click', async ()=>{
-  scale = 1.0;
-  if (!pdfDoc) return;
-  const page = await pdfDoc.getPage(1);
-  await renderPage(page);
-});
-
-// handle resize to reposition hotspots
-window.addEventListener('resize', async ()=>{
-  if (!pdfDoc) return;
-  const page = await pdfDoc.getPage(1);
-  await renderPage(page);
-});
-
+// inicializa
 populateLinkList();
-renderPdfFromUrl(pdfUrl).catch(err=>{
-  console.error(err);
-  alert('Erro ao carregar PDF: '+err.message);
-});
+loadPdf();
 
 </script>
 </body>
